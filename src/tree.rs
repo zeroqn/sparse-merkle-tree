@@ -8,6 +8,9 @@ use crate::{
 };
 use core::cmp::Ordering;
 use core::marker::PhantomData;
+use std::collections::HashMap;
+
+use rayon::prelude::*;
 
 /// The branch key
 #[derive(Debug, Clone, Eq, PartialEq, Hash)]
@@ -51,7 +54,7 @@ pub struct SparseMerkleTree<H, V, S> {
     phantom: PhantomData<(H, V)>,
 }
 
-impl<H: Hasher + Default, V: Value, S: Store<V>> SparseMerkleTree<H, V, S> {
+impl<H: Hasher + Default, V: Value, S: Store<V> + Sync> SparseMerkleTree<H, V, S> {
     /// Build a merkle tree from root and store
     pub fn new(root: H256, store: S) -> SparseMerkleTree<H, V, S> {
         SparseMerkleTree {
@@ -157,6 +160,33 @@ impl<H: Hasher + Default, V: Value, S: Store<V>> SparseMerkleTree<H, V, S> {
             nodes.push((k, value));
         }
 
+        let mut branch_keys: Vec<BranchKey> = Vec::new();
+        let mut node_keys: Vec<H256> = nodes.iter().map(|(k, _)| *k).collect();
+        for height in 0..=core::u8::MAX {
+            let mut next_nodes: Vec<H256> = Vec::new();
+            let mut i = 0;
+            while i < node_keys.len() {
+                let current_key = &node_keys[i];
+                i += 1;
+                let parent_key = current_key.parent_path(height);
+                branch_keys.push(BranchKey::new(height, parent_key));
+
+                next_nodes.push(parent_key);
+            }
+            node_keys = next_nodes;
+        }
+
+        let store = &self.store;
+        let branches = branch_keys
+            .into_par_iter()
+            .filter_map(|key| {
+                store
+                    .get_branch(&key)
+                    .transpose()
+                    .map(|maybe_node| maybe_node.map(|node| (key, node)))
+            })
+            .collect::<Result<HashMap<_, _>>>()?;
+
         for height in 0..=core::u8::MAX {
             let mut next_nodes: Vec<(H256, MergeValue)> = Vec::new();
             let mut i = 0;
@@ -170,7 +200,7 @@ impl<H: Hasher + Default, V: Value, S: Store<V>> SparseMerkleTree<H, V, S> {
                 let mut right = None;
                 if i < nodes.len() && (!current_key.is_right(height)) {
                     let (neighbor_key, neighbor_value) = &nodes[i];
-                    let mut right_key = current_key.clone();
+                    let mut right_key = *current_key;
                     right_key.set_bit(height);
                     if right_key == *neighbor_key {
                         right = Some(neighbor_value.clone());
@@ -182,7 +212,7 @@ impl<H: Hasher + Default, V: Value, S: Store<V>> SparseMerkleTree<H, V, S> {
                     (current_merge_value.clone(), right_merge_value)
                 } else {
                     // In case neighbor is not available, fetch from store
-                    if let Some(parent_branch) = self.store.get_branch(&parent_branch_key)? {
+                    if let Some(parent_branch) = branches.get(&parent_branch_key).cloned() {
                         if current_key.is_right(height) {
                             (parent_branch.left, current_merge_value.clone())
                         } else {
