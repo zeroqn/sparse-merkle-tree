@@ -8,9 +8,6 @@ use crate::{
 };
 use core::cmp::Ordering;
 use core::marker::PhantomData;
-use std::collections::HashMap;
-
-use rayon::prelude::*;
 
 /// The branch key
 #[derive(Debug, Clone, Eq, PartialEq, Hash)]
@@ -54,7 +51,7 @@ pub struct SparseMerkleTree<H, V, S> {
     phantom: PhantomData<(H, V)>,
 }
 
-impl<H: Hasher + Default, V: Value, S: Store<V> + Sync> SparseMerkleTree<H, V, S> {
+impl<H: Hasher + Default, V: Value, S: Store<V>> SparseMerkleTree<H, V, S> {
     /// Build a merkle tree from root and store
     pub fn new(root: H256, store: S) -> SparseMerkleTree<H, V, S> {
         SparseMerkleTree {
@@ -146,8 +143,8 @@ impl<H: Hasher + Default, V: Value, S: Store<V> + Sync> SparseMerkleTree<H, V, S
     pub fn update_all(&mut self, mut leaves: Vec<(H256, V)>) -> Result<&H256> {
         // Dedup(only keep the last of each key) and sort leaves
         leaves.reverse();
-        leaves.dedup_by_key(|(a, _)| a.clone());
-        leaves.sort_by_key(|(a, _)| a.clone());
+        leaves.dedup_by_key(|(a, _)| *a);
+        leaves.sort_by_key(|(a, _)| *a);
 
         let mut nodes: Vec<(H256, MergeValue)> = Vec::new();
         for (k, v) in leaves {
@@ -176,17 +173,7 @@ impl<H: Hasher + Default, V: Value, S: Store<V> + Sync> SparseMerkleTree<H, V, S
             node_keys = next_nodes;
         }
 
-        let store = &self.store;
-        let branches = branch_keys
-            .into_par_iter()
-            .filter_map(|key| {
-                store
-                    .get_branch(&key)
-                    .transpose()
-                    .map(|maybe_node| maybe_node.map(|node| (key, node)))
-            })
-            .collect::<Result<HashMap<_, _>>>()?;
-
+        let branches = self.store.prefetch_branches(branch_keys.iter())?;
         for height in 0..=core::u8::MAX {
             let mut next_nodes: Vec<(H256, MergeValue)> = Vec::new();
             let mut i = 0;

@@ -32,6 +32,17 @@ impl<V: Clone> Store<V> for DefaultStore<V> {
     fn get_leaf(&self, leaf_key: &H256) -> Result<Option<V>, Error> {
         Ok(self.leaves_map.get(leaf_key).map(Clone::clone))
     }
+    fn prefetch_branches<'a>(
+        &self,
+        branch_keys: impl Iterator<Item = &'a BranchKey>,
+    ) -> Result<Map<BranchKey, BranchNode>, Error> {
+        let branches = branch_keys.filter_map(|k| {
+            self.branches_map
+                .get(k)
+                .map(|n| (k.to_owned(), n.to_owned()))
+        });
+        Ok(branches.collect())
+    }
     fn insert_branch(&mut self, branch_key: BranchKey, branch: BranchNode) -> Result<(), Error> {
         self.branches_map.insert(branch_key, branch);
         Ok(())
