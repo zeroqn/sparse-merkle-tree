@@ -24,11 +24,18 @@ extern "C" {
 
     fn smt_state_insert(state: *mut smt_state_t, key: *const u8, value: *const u8) -> i32;
     fn smt_state_normalize(state: *mut smt_state_t);
+    fn smt_state_fetch(state: *const smt_state_t, key: *const u8, value: *mut u8) -> i32;
     fn smt_verify(
         hash: *const u8,
         state: *const smt_state_t,
         proof: *const u8,
         proof_length: u32,
+    ) -> i32;
+    fn smt_calculate_root(
+        buffer: *mut u8,
+        pairs: *const smt_state_t,
+        proof: *const u8,
+        proff_length: u32,
     ) -> i32;
 }
 
@@ -84,6 +91,36 @@ impl SMTBuilder {
 }
 
 impl SMT {
+    pub fn update(&mut self, key: &[u8; 32], value: &[u8; 32]) -> Result<(), i32> {
+        match unsafe { smt_state_insert(self.state.as_mut(), key.as_ptr(), value.as_ptr()) } {
+            0 => Ok(()),
+            err => Err(err),
+        }
+    }
+
+    pub fn get(&self, key: &[u8; 32]) -> Result<[u8; 32], i32> {
+        let mut value = [0u8; 32];
+        match unsafe { smt_state_fetch(self.state.as_ref(), key.as_ptr(), value.as_mut_ptr()) } {
+            0 => Ok(value),
+            err => Err(err),
+        }
+    }
+
+    pub fn calculate_root(&self, proof: &[u8]) -> Result<[u8; 32], i32> {
+        let mut root = [0u8; 32];
+        match unsafe {
+            smt_calculate_root(
+                root.as_mut_ptr(),
+                self.state.as_ref(),
+                proof.as_ptr(),
+                proof.len() as u32,
+            )
+        } {
+            0 => Ok(root),
+            err => Err(err),
+        }
+    }
+
     pub fn verify(&self, root: &H256, proof: &[u8]) -> Result<(), i32> {
         unsafe {
             let verify_ret = smt_verify(
