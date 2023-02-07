@@ -106,6 +106,12 @@ impl SMT {
         }
     }
 
+    pub fn normalize(&mut self) {
+        unsafe {
+            smt_state_normalize(self.state.as_mut())
+        }
+    }
+
     pub fn calculate_root(&self, proof: &[u8]) -> Result<[u8; 32], i32> {
         let mut root = [0u8; 32];
         match unsafe {
